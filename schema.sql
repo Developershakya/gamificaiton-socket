@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS rooms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT UNIQUE NOT NULL,
+  player1 TEXT,
+  player2 TEXT,
+  status TEXT DEFAULT 'waiting'
+);

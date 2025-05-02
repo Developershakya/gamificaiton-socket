@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LAN Quiz Multiplayer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body class="bg-gradient-to-br from-purple-800 to-fuchsia-900 min-h-screen flex items-center justify-center px-4 py-6">
+
+  <div class="w-full max-w-3xl" id="quiz-container">
+
+    <!-- Top Controls: Generate + Join -->
+    <div class="text-center mb-8">
+      <button onclick="createCode()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-white">Generate Code</button>
+      <input type="text" id="join-code" placeholder="Enter Code" class="px-3 py-2 rounded border ml-2 text-black">
+      <button onclick="joinCode()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white ml-2">Join</button>
+    </div>
+
+    <!-- Output / Game Content -->
+    <div id="game-area" class="text-white text-center text-xl font-semibold">
+      Waiting to start...
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let roomCode = '';
+    let currentIndex = 0;
+    let totalQuestions = 0;
+    let score = 0;
+    let questions = [];
+
+    function createCode() {
+      fetch('/create_room')
+        .then(res => res.json())
+        .then(data => {
+          roomCode = data.code;
+          document.getElementById("game-area").innerHTML = `
+            <div class="text-white text-xl">Your Room Code: <strong>${roomCode}</strong><br>Ask second player to join using this code.</div>
+          `;
+        });
+    }
+
+    function joinCode() {
+      const code = document.getElementById("join-code").value.trim();
+      if (code === "") return alert("Please enter a code");
+      roomCode = code;
+      socket.emit('join_room', { code: roomCode });
+    }
+
+    socket.on('room_joined', data => {
+      document.getElementById("game-area").innerHTML = `
+        <div class="text-white text-lg font-semibold">Joined Room: ${roomCode}<br>Players connected: ${data.player_count}/2</div>
+      `;
+    });
+
+    socket.on('room_full', () => {
+      document.getElementById("game-area").innerHTML = `<div class="text-red-400">❌ Room is full or does not exist.</div>`;
+    });
+
+    socket.on('start_game', data => {
+      questions = [data.question];
+      totalQuestions = data.total;
+      currentIndex = data.index;
+      loadQuestion();
+    });
+
+    socket.on('next_question', data => {
+      questions = [data.question];
+      currentIndex = data.index;
+      loadQuestion();
+    });
+
+    socket.on('quiz_complete', data => {
+      const scores = data.scores;
+      let resultHTML = `<div class="bg-black bg-opacity-70 text-white text-center text-2xl font-bold rounded-lg py-10 px-6">🎉 Quiz Complete!<br/><br/>`;
+      for (const [id, score] of Object.entries(scores)) {
+        resultHTML += `Player (${id.slice(0, 5)}...): <span class="text-green-400">${score}</span><br/>`;
+      }
+      resultHTML += `</div>`;
+      document.getElementById("game-area").innerHTML = resultHTML;
+    });
+
+    function loadQuestion() {
+      const current = questions[0];
+      const container = document.getElementById("game-area");
+      const questionHtml = `
+        <div class="bg-black bg-opacity-50 text-white text-center text-xl md:text-2xl font-semibold rounded-lg py-4 mb-6">
+          <div class="text-sm opacity-80 mb-1">${currentIndex + 1}/${totalQuestions}</div>
+          ${current.question}
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          ${current.options.map((opt, idx) => `
+            <div onclick="checkAnswer(this, '${opt.replace(/'/g, "\\'")}')" 
+                 class="relative p-6 rounded-xl cursor-pointer text-white bg-gradient-to-r from-indigo-500 to-purple-500 hover:brightness-110 text-center text-lg font-medium transition-all duration-200">
+              <span class="absolute top-2 right-3 bg-black bg-opacity-30 text-xs font-bold px-2 py-1 rounded">${idx + 1}</span>
+              ${opt}
+            </div>
+          `).join("")}
+        </div>
+      `;
+      container.innerHTML = questionHtml;
+    }
+
+    function checkAnswer(element, selectedOption) {
+      const allOptions = document.querySelectorAll('[onclick^="checkAnswer"]');
+      allOptions.forEach(opt => opt.classList.remove('ring', 'ring-green-400', 'ring-red-500'));
+      socket.emit("answer", { selected: selectedOption, code: roomCode });
+    }
+  </script>
+
+</body>
+</html>
