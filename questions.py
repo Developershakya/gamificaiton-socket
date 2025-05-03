@@ -8,5 +8,15 @@ QUESTIONS = [
         'question': 'What is 2 + 2?',
         'options': ['3', '4', '5', '6'],
         'answer': '4'
+    },
+    {
+        'question': 'Which planet is known as the Red Planet?',
+        'options': ['Earth', 'Mars', 'Jupiter', 'Saturn'],
+        'answer': 'Mars'
+    },
+    {
+        'question': 'Who wrote "To Kill a Mockingbird"?',
+        'options': ['Harper Lee', 'J.K. Rowling', 'George Orwell', 'Jane Austen'],
+        'answer': 'Harper Lee'
     }
 ]

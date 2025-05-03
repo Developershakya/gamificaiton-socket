@@ -1,3 +1,4 @@
+
 from flask import Flask, render_template
 from flask_socketio import SocketIO, join_room, emit
 from models import db, Player, Question
@@ -81,13 +82,14 @@ def send_question(room):
     socketio.start_background_task(question_timer, room)
 
 def question_timer(room):
-    socketio.sleep(10)
+    socketio.sleep(10)  # Wait for 10 seconds
     finalize_question(room)
 
 def finalize_question(room):
     room_data = rooms[room]
     question = Question.query.all()[room_data['index']]
 
+    # Here we finalize the answers and scores
     for user in room_data['players']:
         answer = room_data['answers'].get(user)
         if answer == question.answer:
@@ -100,8 +102,14 @@ def finalize_question(room):
             player.score = room_data['scores'][user]
     db.session.commit()
 
+    # Increment the index to move to the next question, if any
     room_data['index'] += 1
-    send_question(room)
+
+    # If all questions are done, end the game
+    if room_data['index'] >= len(Question.query.all()):
+        socketio.emit('quiz_end', {'scores': room_data['scores']}, room=room)
+    else:
+        send_question(room)
 
 @socketio.on('answer')
 def handle_answer(data):
@@ -110,12 +118,9 @@ def handle_answer(data):
     answer = data['answer']
     if room in rooms and username in rooms[room]['answers']:
         rooms[room]['answers'][username] = answer
+        # If both players have answered, move to the next question
         if all(rooms[room]['answers'][p] is not None for p in rooms[room]['players']):
             finalize_question(room)
 
-
-
-
 if __name__ == '__main__':
     socketio.run(app, debug=True)
-

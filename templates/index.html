@@ -26,6 +26,12 @@
         <h3 id="timer">10</h3>
     </div>
 
+    <div id="game-over" style="display:none;">
+        <h2>Game Over!</h2>
+        <h3>Final Scores:</h3>
+        <ul id="score-list"></ul>
+    </div>
+
     <script>
         const socket = io();
         let room = "";
@@ -102,9 +108,16 @@
             }, 1000);
         });
 
-        socket.on('quiz_end', () => {
-            alert("Quiz over! Reloading.");
-            location.reload();
+        socket.on('quiz_end', (data) => {
+            document.getElementById('quiz').style.display = 'none';
+            document.getElementById('game-over').style.display = 'block';
+
+            const scoreList = document.getElementById('score-list');
+            for (let player in data.scores) {
+                const li = document.createElement('li');
+                li.innerText = player + ": " + data.scores[player];
+                scoreList.appendChild(li);
+            }
         });
 
         socket.on('room_error', msg => alert(msg));
