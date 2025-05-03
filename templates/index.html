@@ -1,115 +1,113 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>LAN Quiz Multiplayer</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <meta charset="UTF-8">
+    <title>Quiz Game</title>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
 </head>
-<body class="bg-gradient-to-br from-purple-800 to-fuchsia-900 min-h-screen flex items-center justify-center px-4 py-6">
-
-  <div class="w-full max-w-3xl" id="quiz-container">
-
-    <!-- Top Controls: Generate + Join -->
-    <div class="text-center mb-8">
-      <button onclick="createCode()" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-white">Generate Code</button>
-      <input type="text" id="join-code" placeholder="Enter Code" class="px-3 py-2 rounded border ml-2 text-black">
-      <button onclick="joinCode()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-white ml-2">Join</button>
+<body>
+    <div id="join">
+        <input id="username" placeholder="Your Name">
+        <button onclick="generateCode()">Generate Code</button>
+        <input id="joinCode" placeholder="Enter Room Code">
+        <button onclick="joinRoom()">Join</button>
+        <div id="generatedCode"></div>
     </div>
 
-    <!-- Output / Game Content -->
-    <div id="game-area" class="text-white text-center text-xl font-semibold">
-      Waiting to start...
+    <div id="waiting" style="display:none;">
+        <h2>Waiting for second player...</h2>
     </div>
-  </div>
 
-  <script>
-    const socket = io();
-    let roomCode = '';
-    let currentIndex = 0;
-    let totalQuestions = 0;
-    let score = 0;
-    let questions = [];
+    <div id="quiz" style="display:none;">
+        <h2 id="question"></h2>
+        <h3>Question: <span id="question-count">1</span> / <span id="total-questions">0</span></h3>
+        <h3>Your username: <span id="username-display"></span></h3>
+        <div id="options"></div>
+        <h3 id="timer">10</h3>
+    </div>
 
-    function createCode() {
-      fetch('/create_room')
-        .then(res => res.json())
-        .then(data => {
-          roomCode = data.code;
-          document.getElementById("game-area").innerHTML = `
-            <div class="text-white text-xl">Your Room Code: <strong>${roomCode}</strong><br>Ask second player to join using this code.</div>
-          `;
+    <script>
+        const socket = io();
+        let room = "";
+        let username = "";
+        let totalQuestions = 0;
+        let currentQuestion = 0;
+
+        function generateCode() {
+            socket.emit('generate_code');
+        }
+
+        socket.on('code_generated', code => {
+            room = code;
+            document.getElementById('generatedCode').innerText = "Room Code: " + code;
         });
-    }
 
-    function joinCode() {
-      const code = document.getElementById("join-code").value.trim();
-      if (code === "") return alert("Please enter a code");
-      roomCode = code;
-      socket.emit('join_room', { code: roomCode });
-    }
+        function joinRoom() {
+            username = document.getElementById('username').value;
+            room = document.getElementById('joinCode').value || room;
+            if (!username || !room) return alert("Enter username and room code");
 
-    socket.on('room_joined', data => {
-      document.getElementById("game-area").innerHTML = `
-        <div class="text-white text-lg font-semibold">Joined Room: ${roomCode}<br>Players connected: ${data.player_count}/2</div>
-      `;
-    });
+            socket.emit('join_room', { username, code: room });
+        }
 
-    socket.on('room_full', () => {
-      document.getElementById("game-area").innerHTML = `<div class="text-red-400">❌ Room is full or does not exist.</div>`;
-    });
+        socket.on('waiting', () => {
+            document.getElementById('join').style.display = 'none';
+            document.getElementById('waiting').style.display = 'block';
+        });
 
-    socket.on('start_game', data => {
-      questions = [data.question];
-      totalQuestions = data.total;
-      currentIndex = data.index;
-      loadQuestion();
-    });
+        socket.on('new_question', data => {
+            document.getElementById('join').style.display = 'none';
+            document.getElementById('waiting').style.display = 'none';
+            document.getElementById('quiz').style.display = 'block';
 
-    socket.on('next_question', data => {
-      questions = [data.question];
-      currentIndex = data.index;
-      loadQuestion();
-    });
+            totalQuestions = data.total;
+            document.getElementById('total-questions').innerText = totalQuestions;
 
-    socket.on('quiz_complete', data => {
-      const scores = data.scores;
-      let resultHTML = `<div class="bg-black bg-opacity-70 text-white text-center text-2xl font-bold rounded-lg py-10 px-6">🎉 Quiz Complete!<br/><br/>`;
-      for (const [id, score] of Object.entries(scores)) {
-        resultHTML += `Player (${id.slice(0, 5)}...): <span class="text-green-400">${score}</span><br/>`;
-      }
-      resultHTML += `</div>`;
-      document.getElementById("game-area").innerHTML = resultHTML;
-    });
+            document.getElementById('question').innerText = data.question;
+            document.getElementById('question-count').innerText = data.index + 1;
 
-    function loadQuestion() {
-      const current = questions[0];
-      const container = document.getElementById("game-area");
-      const questionHtml = `
-        <div class="bg-black bg-opacity-50 text-white text-center text-xl md:text-2xl font-semibold rounded-lg py-4 mb-6">
-          <div class="text-sm opacity-80 mb-1">${currentIndex + 1}/${totalQuestions}</div>
-          ${current.question}
-        </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          ${current.options.map((opt, idx) => `
-            <div onclick="checkAnswer(this, '${opt.replace(/'/g, "\\'")}')" 
-                 class="relative p-6 rounded-xl cursor-pointer text-white bg-gradient-to-r from-indigo-500 to-purple-500 hover:brightness-110 text-center text-lg font-medium transition-all duration-200">
-              <span class="absolute top-2 right-3 bg-black bg-opacity-30 text-xs font-bold px-2 py-1 rounded">${idx + 1}</span>
-              ${opt}
-            </div>
-          `).join("")}
-        </div>
-      `;
-      container.innerHTML = questionHtml;
-    }
+            const optionsDiv = document.getElementById('options');
+            optionsDiv.innerHTML = '';
 
-    function checkAnswer(element, selectedOption) {
-      const allOptions = document.querySelectorAll('[onclick^="checkAnswer"]');
-      allOptions.forEach(opt => opt.classList.remove('ring', 'ring-green-400', 'ring-red-500'));
-      socket.emit("answer", { selected: selectedOption, code: roomCode });
-    }
-  </script>
+            data.options.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.innerText = opt;
+                btn.onclick = () => {
+                    socket.emit('answer', {
+                        username,
+                        room,
+                        answer: opt
+                    });
+                };
+                optionsDiv.appendChild(btn);
+            });
 
+            document.getElementById('username-display').innerText = username;
+
+            let countdown = 10;
+            const timer = document.getElementById('timer');
+            timer.innerText = countdown;
+
+            const interval = setInterval(() => {
+                countdown--;
+                timer.innerText = countdown;
+                if (countdown <= 0) {
+                    clearInterval(interval);
+                    socket.emit('answer', {
+                        username,
+                        room,
+                        answer: ""  // blank = timeout
+                    });
+                }
+            }, 1000);
+        });
+
+        socket.on('quiz_end', () => {
+            alert("Quiz over! Reloading.");
+            location.reload();
+        });
+
+        socket.on('room_error', msg => alert(msg));
+    </script>
 </body>
 </html>

@@ -1,96 +1,121 @@
-from flask import Flask, render_template, request, jsonify
-from flask_socketio import SocketIO, emit, join_room
+from flask import Flask, render_template
+from flask_socketio import SocketIO, join_room, emit
+from models import db, Player, Question
+from questions import QUESTIONS
 import random, string
-from database import create_table, create_room, join_room_by_code, get_room
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
+app.config['SECRET_KEY'] = 'secret'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///quiz.db'
 socketio = SocketIO(app)
+db.init_app(app)
 
-create_table()
-
-questions = [
-    {
-        "question": "What does LAN stand for?",
-        "options": ["Local Around Network", "Listed Area Network", "Line Area Network", "Local Area Network"],
-        "answer": "Local Area Network"
-    },
-    {
-        "question": "What does SQL stand for?",
-        "options": ["Structured Query Language", "Simple Query List", "Strong Question Logic", "Sequential Query Log"],
-        "answer": "Structured Query Language"
-    },
-    {
-        "question": "Which of these is a primary key feature?",
-        "options": ["Allows duplicates", "Must be unique", "Can be null", "Can be float"],
-        "answer": "Must be unique"
-    }
-]
-
-scoreboard = {}
-current_question_index = {}
+rooms = {}
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-def generate_code(length=6):
+with app.app_context():
+    db.create_all()
+    if Question.query.count() == 0:
+        for q in QUESTIONS:
+            db.session.add(Question(**q))
+        db.session.commit()
+
+def generate_code(length=5):
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
-@app.route('/create_room')
-def create_room_http():
+@socketio.on('generate_code')
+def handle_generate_code():
     code = generate_code()
+    rooms[code] = {'players': [], 'index': 0, 'scores': {}, 'answers': {}, 'timer_started': False}
+    emit('code_generated', code)
 
-    # You can replace '127.0.0.1' with actual session or identifier logic if needed
-    sid = request.remote_addr  # Using the IP address as the session identifier for simplicity
-
-    # Add this code to your data structures
-    create_room(code, sid)           # Your own function to store room
-    scoreboard[code] = {sid: 0}
-    current_question_index[code] = 0
-
-    return jsonify({'code': code})
-
-@socketio.on('join_code')
+@socketio.on('join_room')
 def handle_join(data):
-    sid = request.sid
-    code = data.get('code')
-    room = get_room(code)
+    username = data['username']
+    room = data['code']
 
-    if room and not room[2]:  # player2 is None
-        join_room_by_code(code, sid)
-        join_room(code)
-        scoreboard[code][sid] = 0
-        emit('joined_successfully', {'code': code, 'player_count': 2}, room=code)
+    if room not in rooms:
+        emit('room_error', 'Invalid Room Code')
+        return
 
-        emit('start_game', {
-            'question': questions[0],
-            'index': 0,
-            'total': len(questions)
-        }, room=code)
+    if len(rooms[room]['players']) >= 2:
+        emit('room_error', 'Room Full')
+        return
+
+    join_room(room)
+    rooms[room]['players'].append(username)
+    rooms[room]['scores'][username] = 0
+    rooms[room]['answers'][username] = None
+
+    db.session.add(Player(name=username, room=room))
+    db.session.commit()
+
+    if len(rooms[room]['players']) == 2:
+        send_question(room)
     else:
-        emit('room_full')
+        emit('waiting', room=room)
+
+def send_question(room):
+    room_data = rooms[room]
+    questions = Question.query.all()
+
+    if room_data['index'] >= len(questions):
+        socketio.emit('quiz_end', room=room)
+        return
+
+    q = questions[room_data['index']]
+    socketio.emit('new_question', {
+        'question': q.question,
+        'options': q.options,
+        'index': room_data['index'],
+        'total': len(questions),
+        'players': room_data['players']
+    }, room=room)
+
+    room_data['answers'] = {p: None for p in room_data['players']}
+    room_data['timer_started'] = True
+
+    socketio.start_background_task(question_timer, room)
+
+def question_timer(room):
+    socketio.sleep(10)
+    finalize_question(room)
+
+def finalize_question(room):
+    room_data = rooms[room]
+    question = Question.query.all()[room_data['index']]
+
+    for user in room_data['players']:
+        answer = room_data['answers'].get(user)
+        if answer == question.answer:
+            room_data['scores'][user] += 1
+        else:
+            room_data['scores'][user] -= 1
+
+        player = Player.query.filter_by(name=user, room=room).first()
+        if player:
+            player.score = room_data['scores'][user]
+    db.session.commit()
+
+    room_data['index'] += 1
+    send_question(room)
 
 @socketio.on('answer')
 def handle_answer(data):
-    sid = request.sid
-    code = data.get('code')
-    selected = data.get('selected')
-    question_index = current_question_index[code]
-    correct = questions[question_index]['answer']
+    username = data['username']
+    room = data['room']
+    answer = data['answer']
+    if room in rooms and username in rooms[room]['answers']:
+        rooms[room]['answers'][username] = answer
+        if all(rooms[room]['answers'][p] is not None for p in rooms[room]['players']):
+            finalize_question(room)
 
-    if selected == correct:
-        scoreboard[code][sid] += 1
 
-    if question_index + 1 < len(questions):
-        current_question_index[code] += 1
-        emit('next_question', {
-            'question': questions[question_index + 1],
-            'index': question_index + 1,
-            'total': len(questions)
-        }, room=code)
-    else:
-        emit('quiz_complete', {'scores': scoreboard[code]}, room=code)
+
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
+
